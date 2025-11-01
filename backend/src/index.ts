@@ -1,38 +1,70 @@
 import express from "express";
 import * as bip39 from "bip39";
 import { HDNodeWallet } from "ethers";
-
-import { client } from "./db";
-client.connect();
+import { PrismaClient } from "./generated/prisma";
 
 const app = express();
 app.use(express.json());
+const prisma = new PrismaClient();
 
 app.post('/signup',async (req,res)=>{
     const username = req.body.username;
     const password = req.body.password;
 
-    await client.query('BEGIN');
-    const result = await client.query(`INSERT INTO userInfo (username,password,depositAddress,privateKey,balance)
-        VALUES($1,$2,$3,$4,$5) RETURNING id`,[username,password,"","",0]);
+    // await client.query('BEGIN');
+    // const result = await client.query(`INSERT INTO userInfo (username,password,depositAddress,privateKey,balance)
+    //     VALUES($1,$2,$3,$4,$5) RETURNING id`,[username,password,"","",0]);
 
-    const userId = result.rows[0].id;
+    // const userId = result.rows[0].id;
 
-    const MNEUMONICS = bip39.generateMnemonic();
-    console.log(MNEUMONICS);
-    // console.log(bip39.generateMnemonic);
-    const SEED = bip39.mnemonicToSeedSync(MNEUMONICS);
+    // const MNEUMONICS = bip39.generateMnemonic();
+    // console.log(MNEUMONICS);
+    // // console.log(bip39.generateMnemonic);
+    // const SEED = bip39.mnemonicToSeedSync(MNEUMONICS);
 
-    const hdNode = HDNodeWallet.fromSeed(SEED);
-    const child = hdNode.derivePath(`m/44'/60'/${userId}'/0`);
+    // const hdNode = HDNodeWallet.fromSeed(SEED);
+    // const child = hdNode.derivePath(`m/44'/60'/${userId}'/0`);
 
-    await client.query(`UPDATE userInfo SET depositAddress=$1 , privateKey=$2 WHERE id=$3`,[child.address , child.privateKey , userId]);
-    await client.query('COMMIT');
+    // await client.query(`UPDATE userInfo SET depositAddress=$1 , privateKey=$2 WHERE id=$3`,[child.address , child.privateKey , userId]);
+    // await client.query('COMMIT');
+
+    const result = await prisma.$transaction(async(tx)=>{
+        const {id:userId} = await tx.user.create({
+            data:{
+                username,
+                password
+            },
+            select:{
+                id:true
+            }
+        })
+
+        console.log(userId)
+
+        const MNEUMONICS = bip39.generateMnemonic();
+        console.log(MNEUMONICS);
+        // console.log(bip39.generateMnemonic);
+        const SEED = bip39.mnemonicToSeedSync(MNEUMONICS);
+
+        const hdNode = HDNodeWallet.fromSeed(SEED);
+        const child = hdNode.derivePath(`m/44'/60'/${userId}'/0`);
+
+        await tx.user.update({
+            where:{id: userId},
+            data:{
+                privateAddress: child.privateKey,
+                address: child.address
+            }
+        })
+
+        return {userId,address : child.address};
+    })
+
     
-    console.log("Private Key: ",child.privateKey);
-    console.log("Public Key: ",child.publicKey);
-    console.log("Address: ",child.address);
-    res.json({userId});
+    // console.log("Private Key: ",child.privateKey);
+    // console.log("Public Key: ",child.publicKey);
+    // console.log("Address: ",child.address);
+    res.json({userId: result.userId , address: result.address});
 })
 
 app.post('/depositAddress/:userId',(req,res)=>{
